@@ -77,8 +77,7 @@ def update_order_remark(order_id, remark_text):
     """
     根据 orderid 更新 customerorder 表中的 customerremark 字段
     """
-    # SQL 逻辑：使用 UPDATE 语句更新指定订单的备注
-    # customerremark 长度限制为 200 字符
+
     sql = """
           UPDATE customerorder
           SET customerremark  = %s,

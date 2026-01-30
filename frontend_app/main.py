@@ -62,6 +62,7 @@ pages = {
     ],
     "物流":[
         st.Page("logistics.py", title="安排配送"),
+        st.Page("multi_order.py", title="多订单聚类")
     ],
     "用户反馈":[
         st.Page("customer_review.py", title="客户评价"),

@@ -210,6 +210,11 @@ if selection == 0:
 
             # --- Tab 1: 总体信息 ---
             with tab1:
+                # 新增：顶部复制区
+                st.info("💡 点击下方订单号右侧图标可直接复制")
+                st.code(order_info['orderid'], language=None)
+
+                st.divider()
                 c1, c2, c3, c4 = st.columns(4)
                 with c1:
                     st.markdown("**操作人**")
@@ -305,6 +310,11 @@ elif selection == 1:
 
                     # --- Tab 1: 总体信息 ---
                     with tab1:
+                        # 新增：顶部复制区
+                        st.info("💡 点击下方订单号右侧图标可直接复制")
+                        st.code(order_info['orderid'], language=None)
+
+                        st.divider()
                         c1, c2, c3, c4 = st.columns(4)
                         with c1:
                             st.markdown("**操作人**")

@@ -105,7 +105,8 @@ def process_full_order_distribution(order_id):
     target_lon = items_data[0]['longitude']
 
     st.write(f"### 📍 配送目标坐标: ({target_lat}, {target_lon})")
-
+    num_item = len(items_data)
+    cnt = 0
     # 3. 循环处理每个商品
     for item in items_data:
         p_name = item['productname']
@@ -122,7 +123,9 @@ def process_full_order_distribution(order_id):
             if "库存不足" in status_msg:
                 st.error(f"⚠️ {status_msg}")
             else:
-                insert_order_transition_logs(order_id)
+                cnt += 1
+                if cnt == num_item:
+                    insert_order_transition_logs(order_id)
                 st.success(f"✅ {status_msg}")
 
             # 使用 dataframe 展示派发路径
