@@ -1,16 +1,52 @@
 import streamlit as st
-from datetime import datetime
 import utils
-import pandas as pd
+import extra_streamlit_components as stx
+import time
+from auth_utils import fetch_user_from_backend
+
+
+cookie_manager = stx.CookieManager(key="create_order_manager")
+
+# --- 身份恢复逻辑 ---
+def sync_session_with_cookie():
+    if st.session_state.get("user"):
+        return
+
+    token = cookie_manager.get("auth_token")
+
+    if not token:
+        return
+
+    if "auth_retry_count" not in st.session_state:
+        st.session_state.auth_retry_count = 0
+
+    user_data = fetch_user_from_backend(token)
+
+    if user_data:
+        # 登录成功：记录状态并重置计数器
+        st.session_state.user = user_data
+        st.session_state.token = token
+        st.session_state.auth_retry_count = 0
+        st.rerun()
+    else:
+        # 登录失败：开始重试逻辑
+        if st.session_state.auth_retry_count < 3:
+            st.session_state.auth_retry_count += 1
+            time.sleep(0.3) 
+            st.warning(f"身份验证尝试中... 第 {st.session_state.auth_retry_count} 次")
+            st.rerun()
+        else:
+            # 3 次均失败：判定 Token 失效，清理并重置
+            cookie_manager.delete("auth_token")
+            st.session_state.auth_retry_count = 0
+            st.error("登录已失效，请重新登录")
+            # 可选：st.rerun() 刷新到未登录状态
+
+# 在页面逻辑开始处调用
+sync_session_with_cookie()
 
 if 'current_page' not in st.session_state:
-    st.session_state.current_page = "query_page"
-
-option_map = {
-    0: '按订单号',
-    1: '按客户',
-    2: '按时间段'
-}
+    st.session_state.current_page = "query_page"  # 默认页面
 
 def update_to_not_rated(order_id: str) -> bool:
     """
@@ -100,164 +136,9 @@ def get_backend_status_name(status_code: str, default: str = "未知状态") -> 
     return statuscode_to_backendname.get(status, default)
 
 
-if 'time_range' not in st.session_state:
-    start = datetime(2022, 1, 1, 9, 30)
-    end = datetime(2026, 1, 1, 9, 30)
-else:
-    start, end = st.session_state.time_range
-if 'customer_id' not in st.session_state:
-    st.session_state.customer_id = None
-if 'order_id' not in st.session_state:
-    st.session_state.order_id = None
-
-def render_select_order_by_id():
-    st.session_state.order_id = st.text_input("输入需要查询的订单号")
-    order_base_info = utils.get_order_base_info(st.session_state.order_id, st.session_state.token)
-    order_fee = order_base_info["fee_info"]
-    order_base_info = order_base_info["base_info"]
-    if (st.session_state.order_id is not None
-            and order_fee is not None \
-            and order_base_info is not None):
-        real_freight_fee = order_fee['freight_fee']
-        if order_base_info['isemergency'] == False and order_fee['originalmoney'] >= order_fee['conditionfreightfree']:
-            real_freight_fee = 0
-        emoji = get_status_emoji(order_base_info['orderstate'])
-        backend_status_name = get_backend_status_name(order_base_info['orderstate'])
-        summary_label = (
-            f"{emoji} **{backend_status_name}** | "
-            f"单号: {order_base_info['orderid']} | "
-            f"客户: {order_base_info['memberid']} | "
-            f"📅 {order_base_info['submitdate'].strftime('%Y-%m-%d %H:%M:%S')} | "
-            f"💰 ¥{order_fee['discountedmoney'] + real_freight_fee:,.2f}"
-        )
-        with st.expander(summary_label):
-            # 3. 内层：Tabs
-            tab1, tab2, tab3, tab4 = st.tabs(["👤 总体信息", "🛒 订单明细", "💰 金额明细", "⏱️ 状态变更"])
-
-            # --- Tab 1: 总体信息 ---
-            with tab1:
-                # 新增：顶部复制区
-                st.info("💡 点击下方订单号右侧图标可直接复制")
-                st.code(order_base_info['orderid'], language=None)
-
-                st.divider()
-                c1, c2, c3, c4 = st.columns(4)
-                with c1:
-                    st.markdown("**操作人**")
-                    st.caption(order_base_info['operatorid'])
-                with c2:
-                    st.markdown("**审批人**")
-                    st.caption(order_base_info['approverid'])
-                with c3:
-                    st.markdown("**是否加急**")
-                    if order_base_info['isemergency']:
-                        st.error("是 (Priority)")
-                    else:
-                        st.info("否 (Normal)")
-                with c4:
-                    st.markdown("**用户评价**")
-                    st.write(order_base_info['customerremark'])
-                    st.markdown("**用户评分**")
-                    st.write(order_base_info['customerscore'])
-
-            # --- Tab 2: 订单明细 (Dataframe) ---
-            with tab2:
-                # 1. 默认不勾选 (value=False)
-                show_details = st.checkbox("显示订单明细 (包含单价与折扣信息)", value=False)
-
-                if show_details:
-                    # 2. 只有在勾选后，才触发后端 API 请求
-                    with st.spinner("正在从服务器获取明细数据..."):
-                        order_full_info = utils.get_order_full_info_sync(st.session_state.order_id, st.session_state.token)
-                        details = order_full_info.get("details", [])
-
-                    if details:
-                        df_items = pd.DataFrame(details)
-                        
-                        # 3. 渲染 Dataframe
-                        st.dataframe(
-                            df_items,
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "快照单价": st.column_config.NumberColumn("单价", format="¥%.2f"),
-                                "小计": st.column_config.NumberColumn("小计金额", format="¥%.2f"),
-                                "线性折扣": st.column_config.NumberColumn(
-                                    "折扣系数",
-                                    format="%.2f", 
-                                    help="1.0代表无折扣，0.9代表九折"
-                                ),
-                            }
-                        )
-                    else:
-                        st.info("该订单暂无明细数据。")
-                else:
-                    # 4. 未勾选时的友好提示
-                    st.info("💡 请勾选上方复选框以加载并查看订单明细。")
-
-            # --- Tab 3: 金额明细 (Key-Value 列表) ---
-            with tab3:
-                # 使用两列布局，更加紧凑
-                fc1, fc2 = st.columns(2)
-
-                with fc1:
-                    st.markdown("#### ➕ 收入项")
-                    st.markdown(f"**商品原始总金额**: `¥{order_fee['originalmoney']:,.2f}`")
-                    st.markdown(f"**商品折后总金额**: `¥{order_fee['discountedmoney']:,.2f}`")
-                    st.markdown(f"**基础运费**: `¥{order_fee['freight_fee']:,.2f}`")
-                    st.divider()
-                    st.caption(f"ℹ️ 免运费门槛: ¥{order_fee['conditionfreightfree']:,.2f}")
-
-                with fc2:
-                    st.markdown("#### ➖ 折扣与最终项")
-                    st.markdown(f"**实际运费**: `¥{real_freight_fee:,.2f}`")
-                    st.markdown(f"**订单审批折扣**: `¥{order_fee['approveddiscount']:,.2f}`")
-                    st.markdown("---")
-                    st.markdown(f"### 🏷️ 最终总价: <span style='color:#e05260'>¥{order_fee['discountedmoney'] + real_freight_fee:,.2f}</span>",
-                                unsafe_allow_html=True)
-
-            # --- Tab 4: 状态变更记录 ---
-            with tab4:
-                show_history = st.checkbox("查看状态变更历史", value=False, key="cb_history")
-
-                if show_history:
-                    with st.spinner("正在加载历史记录..."):
-                        order_history = utils.get_order_status_history(st.session_state.order_id)
-                    if not order_history:
-                        st.caption("暂无记录")
-                    else:
-                        for log in order_history:
-                            # 简单的时间轴模拟
-                            col_time, col_info = st.columns([1, 4])
-                            col_time.caption(log['changetime'])
-                            col_info.write(f"**{get_status_emoji(log['fromstate'])} {get_backend_status_name(log['fromstate'])}**➡️**{get_status_emoji(log['tostate'])} {get_backend_status_name(log['tostate'])}** - {log['changer']}")
-
-                    st.write("") # 留白
-                    st.divider()
-                    
-                    # 2. 动态操作区：根据当前订单状态显示按钮
-                    current_state = order_base_info['orderstate']
-                    
-                    if current_state == "SHIPPED_NOT_RECEIVED":
-                        st.subheader("🏁 履约确认")
-                        st.warning("如果您已收到商品，请点击下方确认收货。")
-                        if st.button("📦 确认收货", key=f"conf_{order_base_info['orderid']}", type="primary"):
-                            if update_to_not_rated(order_base_info['orderid']): # 后端改状态逻辑
-                                st.success("收货成功！")
-                                st.rerun()
-
-                    elif current_state == "NOT_RATED":
-                        st.subheader("✍️ 评价回馈")
-                        st.info("交易已完成，您可以对订单进行评价。")
-                        # 触发之前写的 handle_review_click 跳转到评价页
-                        st.button("💬 立即评价", 
-                                key=f"eval_{order_base_info['orderid']}", 
-                                type="primary", 
-                                on_click=handle_review_click, 
-                                args=(order_base_info['orderid'],))
 
 def render_select_order_by_user():
-    st.session_state.customer_id = st.text_input("输入需要查询的客户")
+    st.session_state.customer_id = st.session_state.user.get("id", "") if st.session_state.get("user") else None
     if st.session_state.customer_id is not None and st.session_state.customer_id != "":
         raw_data = utils.get_customer_orders_list(st.session_state.customer_id)
         if raw_data:
@@ -434,51 +315,6 @@ def render_select_order_by_user():
                                     on_click=handle_review_click, 
                                     args=(order_info['orderid'],))
 
-def render_select_order_by_date():
-    # 1. 日期选择器
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("开始日期", datetime.now().replace(day=1))
-    with col2:
-        end_date = st.date_input("结束日期", datetime.now())
-
-    # 2. 转换日期为 datetime 对象（通常需要补全时分秒）
-    start_dt = datetime.combine(start_date, datetime.min.time())
-    end_dt = datetime.combine(end_date, datetime.max.time())
-
-    if st.button("开始查询"):
-        with st.spinner("正在检索数据..."):
-            data = utils.select_order_by_time_sync(start_dt, end_dt)
-            
-            if data:
-                # 展平数据用于表格显示
-                flat_data = []
-                for item in data:
-                    # 融合基础信息与费用信息
-                    combined = {**item['base_info'], **item['fee_info']}
-                    flat_data.append(combined)
-                
-                st.dataframe(flat_data, use_container_width=True)
-                st.success(f"成功找到 {len(data)} 条订单记录")
-            else:
-                st.warning("所选时间范围内无订单数据")
-
-def render_order_query_page():
-    selection = st.pills(
-        "查询方式",
-        options=option_map.keys(),
-        format_func=lambda option: option_map[option],
-        selection_mode="single",
-    )
-    if selection == 0:
-        render_select_order_by_id()
-    elif selection == 1:
-        render_select_order_by_user()
-    elif selection == 2:
-        render_select_order_by_date()
-
-import streamlit as st
-import pandas as pd
 
 def render_order_review_page():
     st.title("✍️ 订单服务评价")
@@ -584,6 +420,6 @@ def render_order_review_page():
 
 
 if st.session_state.current_page == "query_page":
-    render_order_query_page()
+    render_select_order_by_user()
 elif st.session_state.current_page == "review_page":
     render_order_review_page()

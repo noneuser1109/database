@@ -1,9 +1,52 @@
 import streamlit as st
 import pandas as pd
-import db_utils
-import psycopg
-import datetime
-import random
+import utils
+import extra_streamlit_components as stx
+import time
+from auth_utils import fetch_user_from_backend
+
+
+cookie_manager = stx.CookieManager(key="create_order_manager")
+
+# --- 身份恢复逻辑 ---
+def sync_session_with_cookie():
+    if st.session_state.get("user"):
+        return
+
+    token = cookie_manager.get("auth_token")
+
+    if not token:
+        return
+
+    if "auth_retry_count" not in st.session_state:
+        st.session_state.auth_retry_count = 0
+
+    user_data = fetch_user_from_backend(token)
+
+    if user_data:
+        # 登录成功：记录状态并重置计数器
+        st.session_state.user = user_data
+        st.session_state.token = token
+        st.session_state.auth_retry_count = 0
+        st.rerun()
+    else:
+        # 登录失败：开始重试逻辑
+        if st.session_state.auth_retry_count < 3:
+            st.session_state.auth_retry_count += 1
+            # 这种短时间的 sleep 配合 rerun 可以给后端/网络一点缓冲时间
+            time.sleep(0.3) 
+            st.warning(f"身份验证尝试中... 第 {st.session_state.auth_retry_count} 次")
+            st.rerun()
+        else:
+            # 3 次均失败：判定 Token 失效，清理并重置
+            cookie_manager.delete("auth_token")
+            st.session_state.auth_retry_count = 0
+            st.error("登录已失效，请重新登录")
+            # 可选：st.rerun() 刷新到未登录状态
+
+# 在页面逻辑开始处调用
+sync_session_with_cookie()
+
 
 @st.fragment
 def show_payment_container():
@@ -19,7 +62,7 @@ def show_payment_container():
         if st.button("确认支付", type="primary", ):
             msg = st.toast("正在支付")
             # 执行支付逻辑
-            log_success = add_order_status_log(
+            log_success = utils.add_order_log_via_api(
                 order_id=st.session_state.orderid,
                 from_state="UNPAID",
                 to_state="PAID_NOT_SHIPPED",
@@ -36,107 +79,11 @@ def show_payment_container():
                 msg.toast("支付失败", icon="❌")
 
 def change_list(item):
-    st.session_state[item] = st.session_state[f"qty_input_{item}"]
+    st.session_state[f"input_{item}"] = st.session_state[f"qty_input_{item}"]
 
 def set_new_orderid(new_orderid):
     st.session_state.orderid = new_orderid
 
-def add_order_status_log(order_id, from_state, to_state, changer, remark):
-    """
-    向 customerorder_statuslog 插入状态变更记录
-    """
-    sql = """
-        INSERT INTO customerorder_statuslog 
-        (logid, orderid, fromstate, tostate, changetime, changer, remark)
-        VALUES (
-            (SELECT COALESCE(MAX(logid), 0) + 1 FROM customerorder_statuslog), -- 确保 logid 不重复
-            %s, %s, %s, CURRENT_TIMESTAMP, %s, %s
-        )
-    """
-    conn = db_utils.init_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(sql, (order_id, from_state, to_state, changer, remark))
-        conn.commit()
-        return True
-    except Exception as e:
-        print(f"日志写入失败: {e}")
-        conn.rollback()
-        return False
-    finally:
-        conn.close()
-
-def generate_order_id():
-    """生成格式如: ORD202310271430051234 的订单号"""
-    now = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-    rand_suffix = random.randint(100, 999)
-    # 生成快递单号: SF + 12位随机数字
-    tracking_no = f"SF{random.randint(10 ** 11, 10 ** 12 - 1)}"
-    return f"ORD{now}{rand_suffix}", tracking_no
-
-
-
-def submit_order_to_db(final_items, total_price, selected_phone, selected_address):
-    order_id, tracking_no = generate_order_id()
-    current_time = datetime.datetime.now()
-
-    # 从 session_state 获取当前会员 ID
-    # 假设结构为 st.session_state.current_user = {'memberid': 'M001', ...}
-    member_id = st.session_state.get('current_user')
-    conn = db_utils.init_db_connection()
-    try:
-        with conn.cursor() as cur:
-            # --- 步骤 1: 插入 customerorder (主表) ---
-            header_sql = """
-                         INSERT INTO customerorder (orderid, memberid, orderstate, submitdate, \
-                                                    operatorid, approverid, originalmoney, discountedmoney, \
-                                                    approveddiscount, conditionfreightfree, isemergency, \
-                                                    customerremark, updatetimestamp, dataversion) \
-                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) \
-                         """
-            cur.execute(header_sql, (
-                order_id, member_id, 'UNPAID', current_time,
-                None, None, total_price, 0,
-                0, 5000, False,
-                None, current_time, 1
-            ))
-
-            # --- 步骤 2: 插入 customerorder_detail (详情表) ---
-            detail_sql = """
-                         INSERT INTO customerorder_detail (orderid, productid, quantity, snapshotprice, \
-                                                           linediscount) \
-                         VALUES (%s, %s, %s, %s, %s) \
-                         """
-            detail_data = [
-                (order_id, item['商品ID'], item['数量'], item['单价'], 0)
-                for item in final_items
-            ]
-            cur.executemany(detail_sql, detail_data)
-
-            # --- 步骤 3: 插入收货/物流表 ---
-            # 根据 image_55a806.png 结构插入
-            delivery_sql = """
-                           INSERT INTO customerorder_shipment (orderid, receiver, mobilephone, memberaddressid, \
-                                                               shipmenttype, trackingnumber, freight_fee) \
-                           VALUES (%s, %s, %s, %s, %s, %s, %s) \
-                           """
-            cur.execute(delivery_sql, (
-                order_id,
-                "收件人-000000",
-                selected_phone,
-                selected_address,
-                "SF_EXPRESS",
-                tracking_no,
-                80
-            ))
-
-            # 提交事务
-            conn.commit()
-            return order_id
-
-    except Exception as e:
-        st.error(f"数据库写入异常: {e}")
-        return None
 
 # 初始化 Session State，用于记录登录状态
 if 'logged_in' not in st.session_state:
@@ -157,173 +104,71 @@ if 'payment_shown' not in st.session_state:
     st.session_state.payment_shown = False
 
 
-@st.cache_data(ttl=3600)
-def get_users():
-    # 建议连接逻辑也放在 try 块内，捕获连接失败的情况
-    conn = db_utils.init_db_connection()
-    try:
-        query = "select memberid from memberinfo;"
-        with conn.cursor() as cur:
-            cur.execute(query)
-            # 对于 SELECT 语句，cur.description 理论上不会是 None
-            results = [row[0] for row in cur.fetchall()]
-
-        return results
-    except Exception as e:
-        # 3. 发生错误时回滚，防止干扰后续连接
-        if conn and not conn.closed:
-            conn.rollback()
-        raise Exception(f"查询执行失败：{str(e)}")
-
-
-@st.cache_data(ttl=3600)
-def get_user_phone(user_id):
-    conn = db_utils.init_db_connection()
-    query = """select phonenumber
-               from memberphone
-                where memberid = %s
-                order by isprimary desc;"""
-    params = (user_id,)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(query, params)
-            # 无返回结果的SQL（如INSERT/UPDATE），直接提交并返回空
-            if cur.description is None:
-                conn.commit()
-                return []
-            results = [row[0] for row in cur.fetchall()]
-            return results
-    except Exception as e:
-        # 3. 发生错误时回滚，防止干扰后续连接
-        if conn and not conn.closed:
-            conn.rollback()
-        raise Exception(f"查询执行失败：{str(e)}")
-
-
-@st.cache_data(ttl=3600)
-def get_user_address(user_id):
-    conn = db_utils.init_db_connection()
-    data_dict = {}
-    query = """SELECT addressrecid, fulladdress
-               FROM memberaddress, \
-                    address_geocoding
-               WHERE memberid = %s \
-                 and memberaddress.addressgeocodeid = address_geocoding.addressid
-                order by isdefault desc;"""
-    params = (user_id,)
-    try:
-        # 执行查询：替换为你的表名和字段名（key_column是键字段，value_column是值字段）
-        # 示例：查询用户表的id（键）和用户名（值）
-
-        # 用with块管理游标（自动关闭游标）
-        with conn.cursor() as cur:
-            # 执行查询（若无需参数，可写cur.execute(query)）
-            cur.execute(query, params)
-
-            # 获取所有查询结果，整理成字典（显示值: 实际键）
-            results = cur.fetchall()
-            for key, value in results:
-                data_dict[key] = value  # value是显示内容，key是系统需要的键
-            return data_dict
-
-    except Exception as e:
-        if conn and not conn.closed:
-            conn.rollback()
-        raise Exception(f"查询执行失败：{str(e)}")
-
-
-def login():
-    """
-    处理用户登录界面逻辑。
-    """
-    st.title("📦 内部商品订购系统")
-    st.header("🔐 用户登录")
-
-    with st.container(border=True):
-        user_id_input = st.text_input("请输入用户 ID ", placeholder="例如: 1001")
-        users = get_users()
-        if st.button("查询 / 登录", type="primary"):
-            if user_id_input in users:
-                st.session_state.logged_in = True
-                st.session_state.current_user = user_id_input
-                st.session_state.current_user_id = user_id_input
-                st.rerun()  # 刷新页面进入下单页
-            else:
-                st.error("❌ 未找到该用户 ID，请检查输入。")
-
-
-def logout():
-    """
-    注销用户并重置状态。
-    """
-    st.session_state.logged_in = False
-    st.session_state.current_user = None
-    st.rerun()
-
-
-@st.cache_data(ttl=3600)
-def get_products():
-    conn = db_utils.init_db_connection()
-    query = """select *
-               from productinfo
-               where isactive = true"""
-    try:
-        with conn.cursor() as cur:
-            cur.execute(query)
-            # 无返回结果的SQL（如INSERT/UPDATE），直接提交并返回空
-            if cur.description is None:
-                conn.commit()
-                return []
-            # 有返回结果的SQL，转换为字典列表
-            columns = [desc[0] for desc in cur.description]
-            results = [dict(zip(columns, row)) for row in cur.fetchall()]
-            return results
-    except Exception as e:
-        # 即使开启了 autocommit，报错时显式 rollback 也是好习惯
-        if conn and not conn.closed:
-            conn.rollback()
-        raise Exception(f"查询执行失败：{str(e)}") from e
-
-
-
 def order_page():
     """
     处理订单填写和提交逻辑。
     """
-    user = st.session_state.current_user
 
-    # 顶部栏：显示用户信息和退出按钮
-    col_info, col_logout = st.columns([8, 2])
-    with col_info:
-        st.success(f"👋 欢迎回来，**{user}** (ID: {st.session_state.current_user_id})")
-    with col_logout:
-        # 使用 key 避免与 form 内的按钮冲突
-        if st.button("注销 / 退出", key="logout_btn"):
-            logout()
+    user = st.session_state.user
+    if not user:
+        st.title("🛍️ 订单下单")
+        # 使用警告框提示用户
+        st.warning("⚠️ 您尚未登录，无法查看产品或提交订单。")
+        
+        # 提供一个美观的引导界面
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("前往登录", type="primary"):
+                # 假设你的 navigation 中登录页的 key 是 "login"
+                # 或者如果你使用 query_params 切换页面
+                st.switch_page("user_login.py") # 请根据你实际的文件路径修改
+        
+        # 核心：停止后续逻辑执行，不渲染产品列表
+        st.stop()
 
-    products = get_products()
+
+    products = utils.get_products()
+
     if products:
-        total_products = len(products)
-        for i in range(total_products // 5):
-            row = st.columns(5)
-            for col, product in zip(row, products[i * 5 : (i + 1) * 5]):
-                tile = col.container(height=240)
-                tile.title(":balloon:")
-                tile.write(f"{product['productname']}\n\n价格：{product['standardprice']}元")
-                if product['productname'] not in st.session_state:
-                    st.session_state[product['productname']] = 0  # 仅在这里设置初始值
-                num = tile.number_input("购买数量", min_value=0,step=1,key=product['productid'])
-                if num != 0: st.session_state.selected_product.add(product['productid'])
-        row = st.columns(5)
-        for col, product in zip(row[:total_products % 5], products[-(total_products % 5):]):
-            tile = col.container(height=240)
-            tile.title(":balloon:")
-            tile.write(f"{product['productname']}\n\n价格：{product['standardprice']}元")
-            if product['productname'] not in st.session_state:
-                st.session_state[product['productname']] = 0  # 仅在这里设置初始值
-            num = tile.number_input("购买数量", min_value=0, step=1,key=product['productid'])
-            if num != 0: st.session_state.selected_product.add(product['productid'])
-
+        # 设定每行显示 5 列
+        cols_per_row = 5
+        
+        # 使用这种方式可以更简洁地处理余数，不需要写两遍逻辑
+        for i in range(0, len(products), cols_per_row):
+            row_products = products[i : i + cols_per_row]
+            cols = st.columns(cols_per_row)
+            
+            for col, product in zip(cols, row_products):
+                # 1. 使用不带 border 的 container 实现自适应
+                with col.container(): 
+                    # 这里可以换成 ImageKit 的图片 URL
+                    st.markdown(f"### :balloon:") 
+                    st.write(f"**ID:** {product['productid']}")
+                    st.write(f"**价格:** {product['standardprice']}元")
+                    
+                    # 初始化 session_state
+                    pid = product['productid']
+                    if pid not in st.session_state:
+                        st.session_state[pid] = 0
+                    
+                    # 2. 数字输入框：Streamlit 默认就带加减号，只要 step 是整数
+                    # 注意：label 设置为 "label_visibility='collapsed'" 可以隐藏标题让界面更清爽
+                    num = st.number_input(
+                        "购买数量", 
+                        min_value=0, 
+                        step=1, 
+                        key=f"input_{pid}", # 建议加上前缀避免冲突
+                        label_visibility="visible" 
+                    )
+                    
+                    # 更新选择状态
+                    if num > 0:
+                        st.session_state.selected_product.add(pid)
+                    elif pid in st.session_state.selected_product:
+                        st.session_state.selected_product.remove(pid)
+                        
+            # 每一行结束后画一条淡淡的分隔线（可选）
+            st.divider()
     # 将列表转换为字典，格式为 {productid: {整行数据}}
     # 这样可以通过 productid 直接索引到 productname, standardprice 等
     products_map = {p['productid']: p for p in products}
@@ -342,6 +187,7 @@ def order_page():
     st.divider()  # 表头下方的分割线
 
     # --- 2. 循环显示数据行 ---
+
     for item in st.session_state.selected_product:
         product_detail = products_map.get(item)
         if not product_detail:
@@ -349,10 +195,11 @@ def order_page():
 
         # 提取数据
         name = product_detail['productname']
-        price = product_detail['standardprice']
+        price = float(product_detail['standardprice'])
         unit = product_detail['unit']
-        quantity = st.session_state.get(item, 0)
-        if int(quantity) == 0:
+        quantity = int(st.session_state.get(f"input_{item}", 0))
+        st.write(quantity)
+        if quantity == 0:
             continue
 
         # 为每一行创建一组相同比例的列
@@ -384,12 +231,12 @@ def order_page():
 
     with st.form("multi_order_form"):
         st.subheader("1. 收货信息 (根据用户ID加载)")
-        st.info(f"收货人默认为: **{user}**")
+        st.info(f"收货人默认为: **{user["realname"]}**")
         # 获取电话和地址选项
-        phone_ops = get_user_phone(st.session_state.current_user_id)
+        phone_ops = utils.get_user_phone(user["id"])
         selected_phone = st.selectbox("选择联系电话", options=phone_ops, key="phone_select")
 
-        address_ops = get_user_address(st.session_state.current_user_id)
+        address_ops = utils.get_user_address(user["id"])
         selected_address = st.selectbox("选择收货地址", options=address_ops.keys(), key="address_select",
                                         format_func=lambda x: address_ops[x])
 
@@ -407,12 +254,12 @@ def order_page():
 
         for item_id in st.session_state.selected_product:
             qty_key = f"qty_input_{item_id}"
-            current_qty = st.session_state.get(qty_key, 0)
+            current_qty = int(st.session_state.get(qty_key, 0))
 
             if current_qty > 0:
                 product_detail = products_map.get(item_id)
                 if product_detail:
-                    price = product_detail['standardprice']
+                    price = float(product_detail['standardprice'])
                     item_total = price * current_qty
 
                     final_items.append({
@@ -429,8 +276,8 @@ def order_page():
             st.error("订单中没有商品，无法提交。")
         else:
             with st.spinner("正在创建订单..."):
-                st.session_state.orderid = submit_order_to_db(
-                    final_items, total_order_price, selected_phone, selected_address
+                st.session_state.orderid = utils.submit_order_to_api(
+                    user.get('id'), final_items, total_order_price, selected_phone, selected_address
                 )
 
             if st.session_state.orderid:
@@ -459,7 +306,4 @@ def order_page():
             st.rerun()
 
 
-if not st.session_state.logged_in:
-    login()
-else:
-    order_page()
+order_page()
