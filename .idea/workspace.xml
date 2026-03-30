@@ -5,12 +5,27 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="a71ee2ff-e6da-49ae-8f68-5bb44c110078" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/frontend_app/chart_utils.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend_app/dash_board.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/2023211457.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/2023211457.iml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/1/1.txt" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend_app/db.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend_app/db.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend_app/customer_review.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend_app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/frontend_app/main.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -26,16 +41,20 @@
   <component name="PropertiesComponent"><![CDATA[{
   "keyToString": {
     "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "Python.chart_utils.executor": "Run",
+    "Python.db.executor": "Run",
+    "Python.main.executor": "Run",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
     "git-widget-placeholder": "display",
     "ignore.virus.scanning.warn.message": "true",
-    "last_opened_file_path": "C:/Users/ASUS/Desktop/code/database",
+    "last_opened_file_path": "D:/Anaconda/Scripts/conda.exe",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.tslint": "true",
     "node.js.selected.package.eslint": "(autodetect)",
     "node.js.selected.package.tslint": "(autodetect)",
     "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable",
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
@@ -57,11 +76,19 @@
       <updated>1773972455274</updated>
       <workItem from="1773972456476" duration="18000" />
       <workItem from="1774056646506" duration="611000" />
-      <workItem from="1774793344618" duration="1201000" />
+      <workItem from="1774793344618" duration="2793000" />
+      <workItem from="1774797677123" duration="3788000" />
+      <workItem from="1774833258526" duration="4694000" />
+      <workItem from="1774844087045" duration="14167000" />
     </task>
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="com.intellij.coverage.CoverageDataManagerImpl">
+    <SUITE FILE_PATH="coverage/database$chart_utils.coverage" NAME="chart_utils Coverage Results" MODIFIED="1774861064361" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/frontend_app" />
+    <SUITE FILE_PATH="coverage/database$db.coverage" NAME="db Coverage Results" MODIFIED="1774845063981" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/backend_app" />
+    <SUITE FILE_PATH="coverage/database$main.coverage" NAME="main Coverage Results" MODIFIED="1774856187639" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>

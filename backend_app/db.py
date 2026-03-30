@@ -10,7 +10,7 @@ from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase, SQLAlchemyBaseUs
 from fastapi import Depends
 from sqlalchemy.sql import func
 
-DATABASE_URL = "postgresql+asyncpg://system:18Monkey@localhost:54321/CustomerOrder"
+DATABASE_URL = "postgresql+asyncpg://system:18Monkey@47.103.209.249:54321/customerorder"
 
 
 class Base(DeclarativeBase):
